@@ -11,7 +11,4 @@ keywords = ["cargo", "plugin", "safety", "safe", "checks"]
 syntex = "0.52.0"
 syntex_syntax = "0.52.0"
 syntex_errors = "0.52.0"
-serde = "0.8"
-serde_derive = "0.8"
-serde_json = "0.8"
 glob = "0.2"

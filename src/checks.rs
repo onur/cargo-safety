@@ -1,13 +1,19 @@
 use std::collections::{HashSet};
+use std::path::Path;
+use std::rc::Rc;
 use syntex_syntax::codemap::{CodeMap, Span};
 use syntex_syntax::ast::{NodeId, Block, FnDecl, Mac, Unsafety, BlockCheckMode,
                          TraitItem, ImplItemKind, ImplItem, TraitItemKind,
                          Attribute, MetaItemKind, Item, ItemKind};
 use syntex_syntax::visit::{self, Visitor, FnKind};
+use syntex_syntax::parse::{self, ParseSess};
+use syntex_errors::Handler;
+use syntex_errors::emitter::{ColorConfig};
+use glob::glob;
 
 
 #[allow(non_camel_case_types)]
-#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize)]
+#[derive(Hash, Eq, PartialEq, Debug, Clone)]
 enum UnsafeKind {
     unsafe_function,
     unsafe_impl,
@@ -18,7 +24,7 @@ enum UnsafeKind {
     unsafe_attr,
 }
 
-#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize)]
+#[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub struct UnsafeCode {
     kind: UnsafeKind,
     occurences: String,
@@ -167,4 +173,45 @@ impl<'a> Visitor for UnsafeCrate<'a> {
             _ => (),
         };
     }
+}
+
+// Returns false for any directories that should be excluded based on
+// cargo conventions
+fn is_valid_dir(file_path: &str) -> bool {
+    !(file_path.contains("examples") ||
+      file_path.contains("target") ||
+      file_path.contains("tests") ||
+      file_path.contains("benches"))
+}
+
+
+// Iterate through all files in the repo and return all safety infractions
+pub fn safety_infractions<'a>(root: &Path) -> HashSet<UnsafeCode> {
+    let codemap = Rc::new(CodeMap::new());
+    let tty_handler = Handler::with_tty_emitter(ColorConfig::Auto, true, false, Some(codemap.clone()));
+    let parse_session = ParseSess::with_span_handler(tty_handler, codemap.clone());
+
+    glob(root.join("*.rs").to_str().unwrap()).expect("Failed to glob")
+        .filter_map(Result::ok)
+        .filter(|x| is_valid_dir(x.to_str().expect("Failed to coerce to string")))
+        .fold(HashSet::<UnsafeCode>::new(), |accum, path_buf| {
+            let file_path = path_buf.as_path();
+
+            let krate = parse::parse_crate_from_file(file_path, &parse_session).unwrap();
+            let mut unsafe_code = UnsafeCrate {
+                locations: HashSet::<UnsafeCode>::new(),
+                codemap: &codemap,
+            };
+
+            // Warning this has side-effects!
+            unsafe_code.visit_mod(&krate.module, krate.span, NodeId::new(0));
+
+            if unsafe_code.locations.len() > 0 {
+                accum.union(&unsafe_code.locations)
+                    .cloned()
+                    .collect::<HashSet<UnsafeCode>>()
+            } else {
+                accum
+            }
+        })
 }
